@@ -11,21 +11,35 @@ const { challengeHex, difficultyHex } = workerData;
 
 // ─── GPU Detection ───────────────────────────────────────
 function hasNvidiaGPU() {
-  try {
-    execSync("nvidia-smi", { timeout: 3000, stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
+  const isWin = process.platform === "win32";
+  const nullRedirect = isWin ? " 2>NUL" : " 2>/dev/null";
+  const paths = isWin
+    ? ["nvidia-smi", "C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe"]
+    : ["nvidia-smi"];
+
+  for (const bin of paths) {
+    try {
+      execSync(`${bin}${nullRedirect}`, { timeout: 3000, stdio: "ignore", windowsHide: true });
+      return true;
+    } catch {}
   }
+  return false;
 }
 
 function hasROCmGPU() {
-  try {
-    execSync("rocm-smi", { timeout: 3000, stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
+  const isWin = process.platform === "win32";
+  const nullRedirect = isWin ? " 2>NUL" : " 2>/dev/null";
+  const paths = isWin
+    ? ["rocm-smi", "C:\\Program Files\\AMD\\ROCm\\bin\\rocm-smi.exe"]
+    : ["rocm-smi"];
+
+  for (const bin of paths) {
+    try {
+      execSync(`${bin}${nullRedirect}`, { timeout: 3000, stdio: "ignore", windowsHide: true });
+      return true;
+    } catch {}
   }
+  return false;
 }
 
 // ─── CPU Fallback (fast, same as worker.mjs) ─────────────

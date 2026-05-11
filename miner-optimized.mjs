@@ -28,30 +28,74 @@ function detectCPU() {
 }
 
 function detectGPU() {
-  try {
-    const out = execSync("nvidia-smi --query-gpu=name,memory.total,compute_cap --format=csv,noheader 2>/dev/null", {
-      encoding: "utf8",
-      timeout: 5000,
-    }).trim();
-    if (out) {
-      const gpus = out.split("\n").map((line) => {
-        const [name, memory, computeCap] = line.split(",").map((s) => s.trim());
-        return { name, memory, computeCap };
-      });
-      return gpus;
-    }
-  } catch {}
+  const isWin = process.platform === "win32";
+  const nullRedirect = isWin ? " 2>NUL" : " 2>/dev/null";
 
-  // Check for AMD GPU via rocm-smi
-  try {
-    const out = execSync("rocm-smi --showproductname 2>/dev/null", {
-      encoding: "utf8",
-      timeout: 5000,
-    }).trim();
-    if (out && out.includes("Card")) {
-      return [{ name: "AMD GPU (ROCm)", memory: "unknown", computeCap: "unknown" }];
-    }
-  } catch {}
+  // NVIDIA GPU detection
+  const nvidiaPaths = isWin
+    ? [
+        "nvidia-smi",
+        "C:\\Program Files\\NVIDIA Corporation\\NVSMI\\nvidia-smi.exe",
+        "C:\\Windows\\System32\\nvidia-smi.exe",
+      ]
+    : ["nvidia-smi"];
+
+  for (const bin of nvidiaPaths) {
+    try {
+      const out = execSync(`${bin} --query-gpu=name,memory.total,compute_cap --format=csv,noheader${nullRedirect}`, {
+        encoding: "utf8",
+        timeout: 5000,
+        windowsHide: true,
+      }).trim();
+      if (out) {
+        const gpus = out.split("\n").map((line) => {
+          const [name, memory, computeCap] = line.split(",").map((s) => s.trim());
+          return { name, memory, computeCap };
+        });
+        return gpus;
+      }
+    } catch {}
+  }
+
+  // AMD GPU detection
+  const amdPaths = isWin
+    ? ["rocm-smi", "C:\\Program Files\\AMD\\ROCm\\bin\\rocm-smi.exe"]
+    : ["rocm-smi"];
+
+  for (const bin of amdPaths) {
+    try {
+      const out = execSync(`${bin} --showproductname${nullRedirect}`, {
+        encoding: "utf8",
+        timeout: 5000,
+        windowsHide: true,
+      }).trim();
+      if (out && out.includes("Card")) {
+        return [{ name: "AMD GPU (ROCm)", memory: "unknown", computeCap: "unknown" }];
+      }
+    } catch {}
+  }
+
+  // Windows fallback: check via WMIC for GPU info
+  if (isWin) {
+    try {
+      const out = execSync('wmic path win32_videocontroller get name,AdapterRAM /format:csv 2>NUL', {
+        encoding: "utf8",
+        timeout: 5000,
+        windowsHide: true,
+      }).trim();
+      if (out) {
+        const lines = out.split("\n").filter((l) => l.trim() && !l.startsWith("Node"));
+        const gpus = lines.map((line) => {
+          const parts = line.split(",").map((s) => s.trim());
+          const name = parts[2] || "Unknown GPU";
+          const ramBytes = parseInt(parts[1]) || 0;
+          const memory = ramBytes > 0 ? `${Math.round(ramBytes / 1024 / 1024)}MB` : "unknown";
+          return { name, memory, computeCap: "unknown" };
+        }).filter((g) => g.name !== "Unknown GPU");
+        if (gpus.length > 0) return gpus;
+      }
+    } catch {}
+  }
 
   return [];
 }
