@@ -205,8 +205,8 @@ def compile_kernel():
         raise
 
 
-def gpu_mine(challenge_hex: str, difficulty_hex: str, timeout_sec: int = 60):
-    """Run GPU mining."""
+def gpu_mine(challenge_hex: str, difficulty_hex: str, timeout_sec: int = 3600):
+    """Run GPU mining in continuous loop."""
     if not GPU_AVAILABLE:
         log("GPU not available (CuPy not installed)")
         return {"found": False, "error": "CuPy not available"}
@@ -232,7 +232,7 @@ def gpu_mine(challenge_hex: str, difficulty_hex: str, timeout_sec: int = 60):
     
     # Mining parameters
     BLOCK_SIZE = 256
-    GRID_SIZE = 4096  # 4096 blocks * 256 threads = 1M hashes per batch
+    GRID_SIZE = 8192  # 8192 blocks x 256 threads = 2M hashes per batch
     BATCH_SIZE = BLOCK_SIZE * GRID_SIZE
     
     log(f"GPU mining config: {GRID_SIZE} blocks x {BLOCK_SIZE} threads = {BATCH_SIZE:,} hashes/batch")
@@ -242,10 +242,11 @@ def gpu_mine(challenge_hex: str, difficulty_hex: str, timeout_sec: int = 60):
     
     start_time = time.time()
     total_hashes = 0
+    last_report = 0
     
     log("Starting GPU mining loop...")
     
-    while time.time() - start_time < timeout_sec:
+    while True:
         d_result = cp.zeros(1, dtype=cp.uint64)
         d_result[0] = 0xFFFFFFFFFFFFFFFF  # Max value = not found
         
@@ -278,21 +279,12 @@ def gpu_mine(challenge_hex: str, difficulty_hex: str, timeout_sec: int = 60):
         
         start_nonce += BATCH_SIZE
         
-        # Print progress
+        # Print progress every 5 seconds
         elapsed = time.time() - start_time
-        if elapsed > 0 and int(elapsed) % 5 == 0:
+        if elapsed - last_report >= 5:
             rate = total_hashes / elapsed
             log(f"{total_hashes:,} hashes | {rate/1e6:.1f}M h/s | {elapsed:.0f}s")
-    
-    elapsed = time.time() - start_time
-    rate = total_hashes / elapsed if elapsed > 0 else 0
-    log(f"Mining timeout after {elapsed:.0f}s, checked {total_hashes:,} hashes")
-    return {
-        "found": False,
-        "checked": str(total_hashes),
-        "elapsed": elapsed,
-        "rate": int(rate)
-    }
+            last_report = elapsed
 
 
 def main():

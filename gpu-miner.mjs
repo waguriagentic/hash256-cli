@@ -201,12 +201,8 @@ async function gpuMineNvidia() {
       resolve(null);
     });
 
-    // Timeout after 120 seconds
-    setTimeout(() => {
-      log("GPU mining timeout (120s)");
-      proc.kill();
-      resolve(null);
-    }, 120000);
+    // No timeout - GPU miner runs continuously until found
+    // Process will be killed when main thread finds a nonce
   });
 }
 
