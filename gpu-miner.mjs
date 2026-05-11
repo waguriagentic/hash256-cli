@@ -88,6 +88,9 @@ function cpuMine(startNonce, count) {
 // ─── GPU Mining via Python + CuPy (NVIDIA) ───────────────
 async function gpuMineNvidia() {
   const gpuScript = path.join(__dirname, "gpu-keccak-miner.py");
+  const isWin = process.platform === "win32";
+  const pythonBin = isWin ? "python" : "python3";
+  const nullRedirect = isWin ? " 2>NUL" : " 2>/dev/null";
 
   // Check if Python GPU script exists
   try {
@@ -99,14 +102,15 @@ async function gpuMineNvidia() {
 
   // Check if cupy is installed
   try {
-    execSync("python3 -c \"import cupy\" 2>/dev/null", { timeout: 5000, stdio: "ignore" });
+    execSync(`${pythonBin} -c "import cupy"${nullRedirect}`, { timeout: 5000, stdio: "ignore", windowsHide: true });
   } catch {
     return null;
   }
 
   return new Promise((resolve, reject) => {
-    const proc = spawn("python3", [gpuScript, challengeHex, difficultyHex], {
+    const proc = spawn(pythonBin, [gpuScript, challengeHex, difficultyHex], {
       stdio: ["pipe", "pipe", "pipe"],
+      windowsHide: true,
     });
 
     let stdout = "";
