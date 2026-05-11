@@ -87,14 +87,20 @@ function cpuMine(startNonce, count) {
 
 // ─── GPU Mining via Python + CuPy (NVIDIA) ───────────────
 async function gpuMineNvidia() {
-  const gpuScript = path.join(__dirname, "gpu-keccak.py");
+  const gpuScript = path.join(__dirname, "gpu-keccak-miner.py");
 
   // Check if Python GPU script exists
   try {
     const { accessSync } = await import("fs");
     accessSync(gpuScript);
   } catch {
-    // No GPU script, fallback to CPU
+    return null;
+  }
+
+  // Check if cupy is installed
+  try {
+    execSync("python3 -c \"import cupy\" 2>/dev/null", { timeout: 5000, stdio: "ignore" });
+  } catch {
     return null;
   }
 
@@ -129,11 +135,11 @@ async function gpuMineNvidia() {
 
     proc.on("error", () => resolve(null));
 
-    // Timeout after 60 seconds
+    // Timeout after 120 seconds
     setTimeout(() => {
       proc.kill();
       resolve(null);
-    }, 60000);
+    }, 120000);
   });
 }
 
