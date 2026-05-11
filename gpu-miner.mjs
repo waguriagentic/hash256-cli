@@ -9,6 +9,10 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const { challengeHex, difficultyHex } = workerData;
 
+function log(msg) {
+  console.log(`[GPU Worker] ${msg}`);
+}
+
 // ─── GPU Detection ───────────────────────────────────────
 function hasNvidiaGPU() {
   const isWin = process.platform === "win32";
@@ -90,24 +94,43 @@ async function gpuMineNvidia() {
   const gpuScript = path.join(__dirname, "gpu-keccak-miner.py");
   const isWin = process.platform === "win32";
   const pythonBin = isWin ? "python" : "python3";
-  const nullRedirect = isWin ? " 2>NUL" : " 2>/dev/null";
+
+  log(`Python binary: ${pythonBin}`);
+  log(`GPU script: ${gpuScript}`);
 
   // Check if Python GPU script exists
   try {
-    const { accessSync } = await import("fs");
-    accessSync(gpuScript);
-  } catch {
+    const { existsSync } = await import("fs");
+    if (!existsSync(gpuScript)) {
+      log("GPU script not found");
+      return null;
+    }
+    log("GPU script found");
+  } catch (e) {
+    log(`Error checking GPU script: ${e.message}`);
     return null;
   }
 
   // Check if cupy is installed
+  log("Checking CuPy installation...");
   try {
-    execSync(`${pythonBin} -c "import cupy"${nullRedirect}`, { timeout: 5000, stdio: "ignore", windowsHide: true });
-  } catch {
+    const checkCmd = isWin
+      ? `${pythonBin} -c "import cupy; print('cupy ok')"`
+      : `${pythonBin} -c "import cupy; print('cupy ok')" 2>/dev/null`;
+    const result = execSync(checkCmd, {
+      encoding: "utf8",
+      timeout: 10000,
+      windowsHide: true,
+    }).trim();
+    log(`CuPy check result: ${result}`);
+  } catch (e) {
+    log(`CuPy not available: ${e.message}`);
     return null;
   }
 
-  return new Promise((resolve, reject) => {
+  log("CuPy available, starting GPU miner...");
+
+  return new Promise((resolve) => {
     const proc = spawn(pythonBin, [gpuScript, challengeHex, difficultyHex], {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
@@ -117,30 +140,49 @@ async function gpuMineNvidia() {
     let stderr = "";
 
     proc.stdout.on("data", (data) => {
-      stdout += data.toString();
+      const chunk = data.toString();
+      stdout += chunk;
+      // Log GPU progress from stderr (progress updates)
     });
 
     proc.stderr.on("data", (data) => {
-      stderr += data.toString();
+      const chunk = data.toString();
+      stderr += chunk;
+      // Forward GPU progress to main console
+      process.stderr.write(chunk);
     });
 
     proc.on("close", (code) => {
-      if (code === 0 && stdout.includes("FOUND")) {
+      log(`Python process exited with code ${code}`);
+      log(`stdout: ${stdout.slice(0, 500)}`);
+      if (stderr) log(`stderr: ${stderr.slice(0, 500)}`);
+
+      if (code === 0 && stdout.includes("found")) {
         try {
-          const result = JSON.parse(stdout.trim().split("\n").pop());
-          resolve(result);
-        } catch {
-          resolve(null);
+          const lines = stdout.trim().split("\n");
+          const jsonLine = lines.find((l) => l.startsWith("{"));
+          if (jsonLine) {
+            const result = JSON.parse(jsonLine);
+            if (result.found) {
+              resolve(result);
+              return;
+            }
+          }
+        } catch (e) {
+          log(`Parse error: ${e.message}`);
         }
-      } else {
-        resolve(null);
       }
+      resolve(null);
     });
 
-    proc.on("error", () => resolve(null));
+    proc.on("error", (err) => {
+      log(`Python process error: ${err.message}`);
+      resolve(null);
+    });
 
     // Timeout after 120 seconds
     setTimeout(() => {
+      log("GPU mining timeout (120s)");
       proc.kill();
       resolve(null);
     }, 120000);
@@ -152,7 +194,7 @@ async function main() {
   const hasGPU = hasNvidiaGPU() || hasROCmGPU();
 
   if (!hasGPU) {
-    // No GPU, run as fast CPU worker
+    log("No GPU detected, running as CPU worker");
     let nonce = BigInt(Math.floor(Math.random() * 2 ** 32));
     const BATCH = 500_000n;
 
@@ -168,16 +210,17 @@ async function main() {
   }
 
   // Try GPU mining
-  console.log("[GPU Worker] GPU detected, attempting GPU acceleration...");
+  log("GPU detected, attempting GPU acceleration...");
 
   const gpuResult = await gpuMineNvidia();
   if (gpuResult && gpuResult.found) {
+    log(`GPU FOUND nonce: ${gpuResult.nonce}`);
     parentPort.postMessage(gpuResult);
     process.exit(0);
   }
 
   // GPU mining not available or didn't find, fallback to CPU
-  console.log("[GPU Worker] GPU kernel not available, falling back to CPU");
+  log("GPU kernel not available or failed, falling back to CPU");
 
   let nonce = BigInt(Math.floor(Math.random() * 2 ** 32));
   const BATCH = 500_000n;
@@ -194,6 +237,6 @@ async function main() {
 }
 
 main().catch((err) => {
-  console.error("GPU Worker fatal:", err.message);
+  log(`Fatal error: ${err.message}`);
   process.exit(1);
 });

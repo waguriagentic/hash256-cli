@@ -12,17 +12,22 @@ import time
 import struct
 import numpy as np
 
+def log(msg):
+    print(f"[GPU] {msg}", file=sys.stderr, flush=True)
+
 try:
     import cupy as cp
     GPU_AVAILABLE = True
-except ImportError:
+    log("CuPy imported successfully")
+except ImportError as e:
     GPU_AVAILABLE = False
+    log(f"CuPy import failed: {e}")
 
 
 # ─── Keccak-256 CUDA Kernel ───────────────────────────────
 # Full keccak-256 implementation in CUDA C
 KECCAK_CUDA_SOURCE = r'''
-extern "C" __global__
+extern "C" {
 
 // Keccak round constants
 __constant__ unsigned long long RC[24] = {
@@ -182,25 +187,37 @@ __global__ void keccak_mine_kernel(
         atomicMin(result_nonce, start_nonce + (unsigned long long)idx);
     }
 }
+
+} // extern "C"
 '''
 
 
 def compile_kernel():
     """Compile the CUDA kernel."""
-    module = cp.RawModule(code=KECCAK_CUDA_SOURCE)
-    kernel = module.get_function('keccak_mine_kernel')
-    return kernel
+    log("Compiling CUDA kernel...")
+    try:
+        module = cp.RawModule(code=KECCAK_CUDA_SOURCE)
+        kernel = module.get_function('keccak_mine_kernel')
+        log("CUDA kernel compiled successfully")
+        return kernel
+    except Exception as e:
+        log(f"CUDA kernel compilation failed: {e}")
+        raise
 
 
 def gpu_mine(challenge_hex: str, difficulty_hex: str, timeout_sec: int = 60):
     """Run GPU mining."""
     if not GPU_AVAILABLE:
+        log("GPU not available (CuPy not installed)")
         return {"found": False, "error": "CuPy not available"}
     
     # Parse inputs
     challenge = bytes.fromhex(challenge_hex[2:] if challenge_hex.startswith("0x") else challenge_hex)
     diff_hex = difficulty_hex[2:] if difficulty_hex.startswith("0x") else difficulty_hex
     difficulty = bytes.fromhex(diff_hex.zfill(64))
+    
+    log(f"Challenge: {challenge_hex[:20]}...")
+    log(f"Difficulty: {difficulty_hex[:20]}...")
     
     # Compile kernel
     try:
@@ -209,6 +226,7 @@ def gpu_mine(challenge_hex: str, difficulty_hex: str, timeout_sec: int = 60):
         return {"found": False, "error": f"CUDA compile failed: {str(e)}"}
     
     # GPU memory
+    log("Allocating GPU memory...")
     d_challenge = cp.asarray(np.frombuffer(challenge, dtype=np.uint8))
     d_difficulty = cp.asarray(np.frombuffer(difficulty, dtype=np.uint8))
     
@@ -217,11 +235,15 @@ def gpu_mine(challenge_hex: str, difficulty_hex: str, timeout_sec: int = 60):
     GRID_SIZE = 4096  # 4096 blocks * 256 threads = 1M hashes per batch
     BATCH_SIZE = BLOCK_SIZE * GRID_SIZE
     
+    log(f"GPU mining config: {GRID_SIZE} blocks x {BLOCK_SIZE} threads = {BATCH_SIZE:,} hashes/batch")
+    
     import random
     start_nonce = random.randint(0, 2**40)
     
     start_time = time.time()
     total_hashes = 0
+    
+    log("Starting GPU mining loop...")
     
     while time.time() - start_time < timeout_sec:
         d_result = cp.zeros(1, dtype=cp.uint64)
@@ -243,8 +265,7 @@ def gpu_mine(challenge_hex: str, difficulty_hex: str, timeout_sec: int = 60):
             elapsed = time.time() - start_time
             rate = total_hashes / elapsed if elapsed > 0 else 0
             
-            # Compute hash for verification
-            input_data = challenge + result_nonce.to_bytes(32, 'big')
+            log(f"FOUND nonce: {result_nonce}")
             
             return {
                 "found": True,
@@ -259,13 +280,13 @@ def gpu_mine(challenge_hex: str, difficulty_hex: str, timeout_sec: int = 60):
         
         # Print progress
         elapsed = time.time() - start_time
-        if elapsed > 0:
+        if elapsed > 0 and int(elapsed) % 5 == 0:
             rate = total_hashes / elapsed
-            sys.stderr.write(f"\r[GPU] {total_hashes:,} hashes | {rate/1e6:.1f}M h/s | {elapsed:.0f}s   ")
-            sys.stderr.flush()
+            log(f"{total_hashes:,} hashes | {rate/1e6:.1f}M h/s | {elapsed:.0f}s")
     
     elapsed = time.time() - start_time
     rate = total_hashes / elapsed if elapsed > 0 else 0
+    log(f"Mining timeout after {elapsed:.0f}s, checked {total_hashes:,} hashes")
     return {
         "found": False,
         "checked": str(total_hashes),
@@ -282,20 +303,25 @@ def main():
     challenge_hex = sys.argv[1]
     difficulty_hex = sys.argv[2]
     
+    log("=== GPU Keccak256 Miner ===")
+    
     if not GPU_AVAILABLE:
+        log("ERROR: CuPy not installed")
         print(json.dumps({"found": False, "error": "CuPy not installed. Install: pip install cupy-cuda12x"}))
         sys.exit(1)
     
     # Check GPU
     try:
         dev = cp.cuda.Device()
-        name = dev.attributes.get("Name", "Unknown")
-        mem = dev.mem_info[1] / 1024 / 1024
-        sys.stderr.write(f"[GPU] {name} ({mem:.0f}MB)\n")
-    except:
-        pass
+        log(f"GPU Device: {dev}")
+        mem_info = dev.mem_info
+        log(f"GPU Memory: {mem_info[1] / 1024 / 1024:.0f}MB total, {mem_info[0] / 1024 / 1024:.0f}MB free")
+    except Exception as e:
+        log(f"GPU info error: {e}")
     
     result = gpu_mine(challenge_hex, difficulty_hex)
+    
+    # Output result as JSON to stdout
     print(json.dumps(result))
     sys.exit(0 if result.get("found") else 1)
 
