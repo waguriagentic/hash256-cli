@@ -93,9 +93,21 @@ function cpuMine(startNonce, count) {
 async function gpuMineNvidia() {
   const gpuScript = path.join(__dirname, "gpu-keccak-miner.py");
   const isWin = process.platform === "win32";
-  const pythonBin = isWin ? "python" : "python3";
 
-  log(`Python binary: ${pythonBin}`);
+  // Try multiple Python paths on Windows
+  const pythonPaths = isWin
+    ? [
+        "python",
+        "python3",
+        "C:\\Users\\Admin\\AppData\\Local\\Programs\\Python\\Python314\\python.exe",
+        "C:\\Python314\\python.exe",
+        "C:\\Python312\\python.exe",
+        "C:\\Python311\\python.exe",
+      ]
+    : ["python3", "python"];
+
+  let pythonBin = null;
+
   log(`GPU script: ${gpuScript}`);
 
   // Check if Python GPU script exists
@@ -111,20 +123,29 @@ async function gpuMineNvidia() {
     return null;
   }
 
-  // Check if cupy is installed
-  log("Checking CuPy installation...");
-  try {
-    const checkCmd = isWin
-      ? `${pythonBin} -c "import cupy; print('cupy ok')"`
-      : `${pythonBin} -c "import cupy; print('cupy ok')" 2>/dev/null`;
-    const result = execSync(checkCmd, {
-      encoding: "utf8",
-      timeout: 10000,
-      windowsHide: true,
-    }).trim();
-    log(`CuPy check result: ${result}`);
-  } catch (e) {
-    log(`CuPy not available: ${e.message}`);
+  // Find Python with CuPy installed
+  log("Searching for Python with CuPy...");
+  for (const bin of pythonPaths) {
+    try {
+      const checkCmd = `"${bin}" -c "import cupy; print('cupy ok')"`;
+      const result = execSync(checkCmd, {
+        encoding: "utf8",
+        timeout: 10000,
+        windowsHide: true,
+        stdio: ["pipe", "pipe", "pipe"],
+      }).trim();
+      if (result.includes("cupy ok")) {
+        pythonBin = bin;
+        log(`Found Python with CuPy: ${bin}`);
+        break;
+      }
+    } catch (e) {
+      // Try next path
+    }
+  }
+
+  if (!pythonBin) {
+    log("No Python with CuPy found");
     return null;
   }
 
